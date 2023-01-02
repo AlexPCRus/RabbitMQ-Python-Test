@@ -1,0 +1,50 @@
+version: "3"
+services:
+    rabbitmq:
+        image: rabbitmq:3.10.7-management
+        hostname: rabbitmq
+        restart: always
+        environment:
+            # вместо guest/guest создается указанный пользователь
+            - RABBITMQ_DEFAULT_USER=rmuser
+            - RABBITMQ_DEFAULT_PASS=rmpassword
+            #disk_free_limit лучше увеличить. при достижении порогового значения кролик сохраняет свой стейт на диск?
+            - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit log_levels [{connection,error},{default,error}] disk_free_limit 2147483648
+        volumes:
+            # монтируем локальную папку чтобы стейт сохранялся вне контейнера
+            - ./rabbitmq:/var/lib/rabbitmq
+        ports:
+            - 15672:15672
+            - 5672:5672
+        # для windows-контейнера чтобы были корректные права на куки эрланга
+        # другой вариант - монтировать /var/lib/rabbitmq/mnesia
+        command: ["bash", "-c", "chmod 400 /var/lib/rabbitmq/.erlang.cookie; rabbitmq-server"]
+        networks:
+            - myrabbitmq
+    rmqconsumer:
+        build: ./consumer
+        hostname: rabbit_consumer
+        restart: always
+        networks:
+            - myrabbitmq
+        volumes:
+            - ./settings:/app/settings
+        environment:
+            WAIT_HOSTS: rabbitmq:5672
+        depends_on:
+            - rabbitmq
+    rmqpublisher:
+        build: ./publisher
+        hostname: rabbit_publisher
+        restart: always
+        networks:
+            - myrabbitmq
+        volumes:
+            - ./settings:/app/settings
+        environment:
+            WAIT_HOSTS: rabbitmq:5672
+        depends_on:
+            - rabbitmq
+networks:
+    myrabbitmq:
+        driver: bridge
