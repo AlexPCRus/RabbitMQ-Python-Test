@@ -11,7 +11,7 @@ services:
             #disk_free_limit лучше увеличить. при достижении порогового значения кролик сохраняет свой стейт на диск?
             - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit log_levels [{connection,error},{default,error}] disk_free_limit 2147483648
         volumes:
-            # монтируем локальную папку чтобы стейт сохранялся вне контейнера
+            # to save rabbitmq state outside container
             - ./rabbitmq:/var/lib/rabbitmq
         ports:
             - 15672:15672
@@ -45,6 +45,59 @@ services:
             WAIT_HOSTS: rabbitmq:5672
         depends_on:
             - rabbitmq
+    telegraf:
+        image: telegraf:latest
+        hostname: telegraf-slerm
+        restart: always
+        volumes:
+            - ./settings/telegraf.conf:/etc/telegraf/telegraf.conf
+        ports:
+            - 9126:9126
+        links:
+            - rabbitmq
+        networks:
+            - myrabbitmq
+    prometheus:
+        image: prom/prometheus:v2.39.1
+        restart: always
+        ports:
+            - 9090:9090
+        environment:
+            TZ: Europe/Samara
+        volumes:
+            - ./settings/prometheus.yml:/etc/prometheus/prometheus.yml
+            - ./prometheus:/prometheus/data
+        links:
+            - telegraf
+        networks:
+            - myrabbitmq
+    grafana:
+        # old version with easy alert settings
+        image: grafana/grafana:7.5.17
+        restart: always
+        environment:
+            TZ: Europe/Samara
+            # Grafana interface URL
+            GF_SERVER_ROOT_URL: http://127.0.0.1:3000
+            GF_RENDERING_SERVER_URL: http://renderer:8081/render
+            GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+        ports:
+            - 3000:3000
+        volumes:
+            - ./grafana:/var/lib/grafana
+        links:
+            - prometheus
+            - renderer
+        networks:
+            - myrabbitmq
+    renderer:
+        restart: always
+        image: hferreira/grafana-image-renderer:latest
+        environment:
+            TZ: Europe/Samara
+        networks:
+            - myrabbitmq
+
 networks:
     myrabbitmq:
         driver: bridge
