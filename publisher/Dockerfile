@@ -22,4 +22,4 @@ RUN pip3 install -r requirements.txt
 COPY main.py main.py
 
 # Запуск publisher
-CMD ["bash", "-c", "sleep 120 && python3 main.py"]
+CMD ["bash", "-c", "sleep 180 && python3 main.py"]

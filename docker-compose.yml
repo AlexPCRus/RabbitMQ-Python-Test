@@ -1,24 +1,75 @@
 version: "3"
 services:
-    rabbitmq:
-        image: rabbitmq:3.10.7-management
-        hostname: rabbitmq
+    rabbitmq1:
+        image: rabbitmq:3-management
+        hostname: rabbitmq1
         restart: always
         environment:
-            # вместо guest/guest создается указанный пользователь
             - RABBITMQ_DEFAULT_USER=rmuser
             - RABBITMQ_DEFAULT_PASS=rmpassword
-            #disk_free_limit лучше увеличить. при достижении порогового значения кролик сохраняет свой стейт на диск?
-            - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit log_levels [{connection,error},{default,error}] disk_free_limit 2147483648
+            - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit disk_free_limit 2147483648
+            - RABBITMQ_ERLANG_COOKIE=SUPER1SECRET1COOKIE
+            - RABBITMQ_NODENAME=master
+            - RABBITMQ_FORCE_BOOT=yes
+#            - RABBITMQ_USE_LONGNAME=true
         volumes:
-            # to save rabbitmq state outside container
-            - ./rabbitmq:/var/lib/rabbitmq
+            - ./rabbitmq-master:/var/lib/rabbitmq
+            - ./settings/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+            - ./settings/rabbitmq.def:/etc/rabbitmq/definitions.json:ro
         ports:
-            - 15672:15672
-            - 5672:5672
-        # для windows-контейнера чтобы были корректные права на куки эрланга
-        # другой вариант - монтировать /var/lib/rabbitmq/mnesia
-        command: ["bash", "-c", "chmod 400 /var/lib/rabbitmq/.erlang.cookie; rabbitmq-server"]
+            - 15673:15672
+            - 5673:5672
+        command: ["bash", "-c", "chmod 400 /var/lib/rabbitmq/.erlang.cookie; rm -f /var/lib/rabbitmq/mnesia/master@rabbitmq1/cluster_nodes.config; rabbitmq-server"]
+        links:
+            - haproxy
+        networks:
+            - myrabbitmq
+    rabbitmq2:
+        image: rabbitmq:3-management
+        hostname: rabbitmq2
+        restart: always
+        environment:
+            - RABBITMQ_DEFAULT_USER=rmuser
+            - RABBITMQ_DEFAULT_PASS=rmpassword
+            - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit disk_free_limit 2147483648
+            - RABBITMQ_ERLANG_COOKIE=SUPER1SECRET1COOKIE
+            - RABBITMQ_NODENAME=slave1
+            - RABBITMQ_FORCE_BOOT=yes
+#            - RABBITMQ_USE_LONGNAME=true
+        volumes:
+            - ./rabbitmq-slave1:/var/lib/rabbitmq
+            - ./settings/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+            - ./settings/rabbitmq.def:/etc/rabbitmq/definitions.json:ro
+        ports:
+            - 15674:15672
+            - 5674:5672
+        command: ["bash", "-c", "chmod 400 /var/lib/rabbitmq/.erlang.cookie; rm -f /var/lib/rabbitmq/mnesia/slave1@rabbitmq2/cluster_nodes.config; sleep 60; rabbitmq-server"]
+        links:
+            - haproxy
+        networks:
+            - myrabbitmq
+    rabbitmq3:
+        image: rabbitmq:3-management
+        hostname: rabbitmq3
+        restart: always
+        environment:
+            - RABBITMQ_DEFAULT_USER=rmuser
+            - RABBITMQ_DEFAULT_PASS=rmpassword
+            - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit disk_free_limit 2147483648
+            - RABBITMQ_ERLANG_COOKIE=SUPER1SECRET1COOKIE
+            - RABBITMQ_NODENAME=slave2
+            - RABBITMQ_FORCE_BOOT=yes
+#            - RABBITMQ_USE_LONGNAME=true
+        volumes:
+            - ./rabbitmq-slave2:/var/lib/rabbitmq
+            - ./settings/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+            - ./settings/rabbitmq.def:/etc/rabbitmq/definitions.json:ro
+        ports:
+            - 15675:15672
+            - 5675:5672
+        command: ["bash", "-c", "chmod 400 /var/lib/rabbitmq/.erlang.cookie; rm -f /var/lib/rabbitmq/mnesia/slave2@rabbitmq3/cluster_nodes.config; sleep 60; rabbitmq-server"]
+        links:
+            - haproxy
         networks:
             - myrabbitmq
     rmqconsumer:
@@ -32,7 +83,11 @@ services:
         environment:
             WAIT_HOSTS: rabbitmq:5672
         depends_on:
-            - rabbitmq
+            - rabbitmq1
+            - rabbitmq2
+            - rabbitmq3
+        links:
+            - haproxy
     rmqpublisher:
         build: ./publisher
         hostname: rabbit_publisher
@@ -44,17 +99,22 @@ services:
         environment:
             WAIT_HOSTS: rabbitmq:5672
         depends_on:
-            - rabbitmq
+            - rabbitmq1
+            - rabbitmq2
+            - rabbitmq3
+        links:
+            - haproxy
     telegraf:
         image: telegraf:latest
-        hostname: telegraf-slerm
+        hostname: telegraf
         restart: always
         volumes:
             - ./settings/telegraf.conf:/etc/telegraf/telegraf.conf
         ports:
             - 9126:9126
         links:
-            - rabbitmq
+            - rabbitmq1
+            - rabbitmq2
         networks:
             - myrabbitmq
     prometheus:
@@ -63,7 +123,7 @@ services:
         ports:
             - 9090:9090
         environment:
-            TZ: Europe/Samara
+            TZ: Europe/Moscow
         volumes:
             - ./settings/prometheus.yml:/etc/prometheus/prometheus.yml
             - ./prometheus:/prometheus/data
@@ -76,7 +136,7 @@ services:
         image: grafana/grafana:7.5.17
         restart: always
         environment:
-            TZ: Europe/Samara
+            TZ: Europe/Moscow
             # Grafana interface URL
             GF_SERVER_ROOT_URL: http://127.0.0.1:3000
             GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -94,10 +154,23 @@ services:
         restart: always
         image: hferreira/grafana-image-renderer:latest
         environment:
-            TZ: Europe/Samara
+            TZ: Europe/Moscow
         networks:
             - myrabbitmq
-
+    haproxy:
+        hostname: rabbitmq
+        restart: always
+        image: haproxy
+        volumes:
+            - ./settings/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+        ports:
+            - 15672:15672
+            - 5672:5672
+            - 1936:1936
+        environment:
+            TZ: Europe/Moscow
+        networks:
+            - myrabbitmq
 networks:
     myrabbitmq:
         driver: bridge
